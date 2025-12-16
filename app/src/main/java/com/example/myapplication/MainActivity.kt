@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -88,20 +89,30 @@ class MainActivity : ComponentActivity() {
         setContent {
             MyApplicationTheme {
                 var showRecordingsList by remember { mutableStateOf(false) }
+                var refreshKey by remember { mutableStateOf(0) }
                 
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = BackgroundLight
                 ) {
                     if (showRecordingsList) {
-                        RecordingsListScreen(
-                            onBack = { showRecordingsList = false },
-                            recordings = getAllRecordings(),
-                            onPlayRecording = { filePath -> playRecording(filePath) },
-                            onStopPlayback = { stopPlayback() },
-                            isPlaying = isPlaying.value,
-                            currentPlayingFile = currentPlayingFile.value
-                        )
+                        key(refreshKey) {
+                            RecordingsListScreen(
+                                onBack = { showRecordingsList = false },
+                                recordings = getAllRecordings(),
+                                onPlayRecording = { filePath -> playRecording(filePath) },
+                                onStopPlayback = { stopPlayback() },
+                                onDeleteRecording = { file -> 
+                                    val result = deleteRecording(file)
+                                    if (result) {
+                                        refreshKey++
+                                    }
+                                    result
+                                },
+                                isPlaying = isPlaying.value,
+                                currentPlayingFile = currentPlayingFile.value
+                            )
+                        }
                     } else {
                         RecorderScreen(
                             onStart = { startRecording() },
@@ -224,6 +235,27 @@ class MainActivity : ComponentActivity() {
                 size = file.length()
             )
         }?.sortedByDescending { it.file.lastModified() } ?: emptyList()
+    }
+    
+    private fun deleteRecording(file: File): Boolean {
+        return try {
+            // Stop playback if this file is currently playing
+            if (_currentPlayingFile.value == file.absolutePath) {
+                stopPlayback()
+            }
+            
+            val deleted = file.delete()
+            if (deleted) {
+                Toast.makeText(this, "Recording deleted", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(this, "Failed to delete recording", Toast.LENGTH_SHORT).show()
+            }
+            deleted
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Toast.makeText(this, "Error deleting recording", Toast.LENGTH_SHORT).show()
+            false
+        }
     }
 
     private fun stopPlayback() {
@@ -792,10 +824,13 @@ fun RecordingsListScreen(
     recordings: List<Recording>,
     onPlayRecording: (String) -> Unit,
     onStopPlayback: () -> Unit,
+    onDeleteRecording: (File) -> Boolean,
     isPlaying: Boolean,
     currentPlayingFile: String?
 ) {
     val context = LocalContext.current
+    var recordingToDelete by remember { mutableStateOf<Recording?>(null) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
     
     Column(
         modifier = Modifier
@@ -880,14 +915,15 @@ fun RecordingsListScreen(
                                 )
                             }
                             
-                            // More Options
+                            // Delete Button
                             IconButton(onClick = {
-                                Toast.makeText(context, "More options for ${recording.name}", Toast.LENGTH_SHORT).show()
+                                recordingToDelete = recording
+                                showDeleteDialog = true
                             }) {
                                 Icon(
-                                    Icons.Default.MoreVert,
-                                    contentDescription = "More",
-                                    tint = TextSecondary
+                                    Icons.Default.Delete,
+                                    contentDescription = "Delete",
+                                    tint = RecordRed
                                 )
                             }
                         }
@@ -923,6 +959,46 @@ fun RecordingsListScreen(
                     )
                 }
             }
+        }
+        
+        // Delete Confirmation Dialog
+        if (showDeleteDialog && recordingToDelete != null) {
+            AlertDialog(
+                onDismissRequest = { 
+                    showDeleteDialog = false
+                    recordingToDelete = null
+                },
+                title = { Text("Delete Recording?") },
+                text = { 
+                    Text("Are you sure you want to delete \"${recordingToDelete?.name}\"? This action cannot be undone.") 
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            recordingToDelete?.let { recording ->
+                                onDeleteRecording(recording.file)
+                            }
+                            showDeleteDialog = false
+                            recordingToDelete = null
+                        },
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = RecordRed
+                        )
+                    ) {
+                        Text("Delete")
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = {
+                            showDeleteDialog = false
+                            recordingToDelete = null
+                        }
+                    ) {
+                        Text("Cancel")
+                    }
+                }
+            )
         }
     }
 }
